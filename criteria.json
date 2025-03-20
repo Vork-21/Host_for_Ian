@@ -1,0 +1,300 @@
+{
+  "metadata": {
+    "lastUpdated": "2025-01-30",
+    "description": "Medical Malpractice Statute of Limitations and Exclusion Rules"
+  },
+  "globalExclusions": {
+    "birthLocation": {
+      "rule": "Must be born in United States",
+      "details": "Any child born outside the U.S. is automatically disqualified"
+    },
+    "ageLimit": {
+      "rule": "Must be younger than state's minor SOL",
+      "details": "If the child's current age is greater than or equal to the state's minor SOL age (e.g., '8th birthday' means must be under 8), the case is automatically disqualified"
+    },
+    "excludedStates": {
+      "list": [
+        "North Carolina",
+        "South Carolina",
+        "Kansas",
+        "Alaska",
+        "California",
+        "Hawaii",
+        "Virginia",
+        "Louisiana",
+        "Delaware",
+        "Florida"
+      ],
+      "details": "Leads from these states are automatically disqualified regardless of other factors"
+    }
+  },
+  "stateSOL": {
+    "Alabama": {
+      "parentSOL": "2 years",
+      "minorSOL": "8th birthday",
+      "canRecoverPreMajority": true,
+      "localCounsel": null
+    },
+    "Arizona": {
+      "parentSOL": "2 years",
+      "minorSOL": "20th birthday",
+      "canRecoverPreMajority": true,
+      "localCounsel": null
+    },
+    "Arkansas": {
+      "parentSOL": "2 years",
+      "minorSOL": "11th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "Colorado": {
+      "parentSOL": "2 years",
+      "minorSOL": "8th birthday",
+      "canRecoverPreMajority": false,
+      "localCounsel": "Dave Hollar"
+    },
+    "Connecticut": {
+      "parentSOL": "2 years",
+      "minorSOL": "2 years",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "Georgia": {
+      "parentSOL": "2 years",
+      "minorSOL": "7th birthday",
+      "canRecoverPreMajority": false,
+      "localCounsel": {
+        "name": "Jed Manton",
+        "email": "jed@hlmlawfirm.com"
+      }
+    },
+    "Idaho": {
+      "parentSOL": "2 years",
+      "minorSOL": "6th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "Illinois": {
+      "parentSOL": "2 years",
+      "minorSOL": "8th birthday",
+      "canRecoverPreMajority": true,
+      "localCounsel": {
+        "name": "Jeff Goldberg",
+        "email": "jgoldberg@goldberglaw.com"
+      }
+    },
+    "Indiana": {
+      "parentSOL": "2 years",
+      "minorSOL": "8th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "Iowa": {
+      "parentSOL": "2 years",
+      "minorSOL": "10th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "Kentucky": {
+      "parentSOL": "1 year",
+      "minorSOL": "19th birthday or 1 year from marriage",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "Maine": {
+      "parentSOL": "3 years",
+      "minorSOL": "6th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "Maryland": {
+      "parentSOL": "3 years",
+      "minorSOL": "19th birthday",
+      "canRecoverPreMajority": "depends on circumstances",
+      "localCounsel": {
+        "name": "Michael Bereston",
+        "email": "bereston@berestonlaw.com"
+      }
+    },
+    "Massachusetts": {
+      "parentSOL": "3 years",
+      "minorSOL": "7th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "Michigan": {
+      "parentSOL": "2 years",
+      "minorSOL": "10th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "Minnesota": {
+      "parentSOL": "4 years",
+      "minorSOL": "7th birthday",
+      "canRecoverPreMajority": true,
+      "localCounsel": {
+        "name": "Shannon Carey",
+        "email": "Shannon.Carey@Knowyourrights.com"
+      }
+    },
+    "Mississippi": {
+      "parentSOL": "2 years",
+      "minorSOL": "8th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "Missouri": {
+      "parentSOL": "2 years",
+      "minorSOL": "20th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "Montana": {
+      "parentSOL": "3 years",
+      "minorSOL": "11th birthday",
+      "canRecoverPreMajority": true,
+      "localCounsel": null
+    },
+    "Nebraska": {
+      "parentSOL": "2 years",
+      "minorSOL": "22nd birthday",
+      "canRecoverPreMajority": "No (4 year SOL for claims for medical bills)",
+      "localCounsel": null
+    },
+    "Nevada": {
+      "parentSOL": "3 years",
+      "minorSOL": "10th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "New Hampshire": {
+      "parentSOL": "2 years",
+      "minorSOL": "20th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "New Jersey": {
+      "parentSOL": "2 years",
+      "minorSOL": "13th birthday (if born after July 2004)",
+      "canRecoverPreMajority": true,
+      "localCounsel": null
+    },
+    "New Mexico": {
+      "parentSOL": "3 years",
+      "minorSOL": "9th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "New York": {
+      "parentSOL": "2.5 years",
+      "minorSOL": "10th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "North Dakota": {
+      "parentSOL": "2 years",
+      "minorSOL": "12th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "Ohio": {
+      "parentSOL": "1 year",
+      "minorSOL": "19th birthday",
+      "canRecoverPreMajority": "Yes, but 4 year SOR may apply",
+      "localCounsel": {
+        "name": "John Lancione",
+        "email": null
+      }
+    },
+    "Oklahoma": {
+      "parentSOL": "2 years",
+      "minorSOL": "7th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "Oregon": {
+      "parentSOL": "2 years",
+      "minorSOL": "5th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "Pennsylvania": {
+      "parentSOL": "2 years",
+      "minorSOL": "20th birthday",
+      "canRecoverPreMajority": true,
+      "localCounsel": null
+    },
+    "Rhode Island": {
+      "parentSOL": "3 years",
+      "minorSOL": "18th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "South Dakota": {
+      "parentSOL": "2 years",
+      "minorSOL": "8th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "Tennessee": {
+      "parentSOL": "1 year",
+      "minorSOL": "3rd birthday",
+      "canRecoverPreMajority": false,
+      "localCounsel": {
+        "name": "Tim Holton",
+        "email": "tholton@holtonlaw.com"
+      }
+    },
+    "Texas": {
+      "parentSOL": "2 years",
+      "minorSOL": "10th birthday",
+      "canRecoverPreMajority": false,
+      "localCounsel": {
+        "name": "Bob Talaska",
+        "email": "rjt@ttlf.com"
+      }
+    },
+    "Utah": {
+      "parentSOL": "2 years",
+      "minorSOL": "2 years",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "Vermont": {
+      "parentSOL": "3 years",
+      "minorSOL": "21st birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "Washington": {
+      "parentSOL": "3 years",
+      "minorSOL": "21st birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "Washington, D.C.": {
+      "parentSOL": "3 years",
+      "minorSOL": "21st birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "West Virginia": {
+      "parentSOL": "2 years",
+      "minorSOL": "12th birthday",
+      "canRecoverPreMajority": true,
+      "localCounsel": null
+    },
+    "Wisconsin": {
+      "parentSOL": "3 years",
+      "minorSOL": "10th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    },
+    "Wyoming": {
+      "parentSOL": "2 years",
+      "minorSOL": "8th birthday",
+      "canRecoverPreMajority": null,
+      "localCounsel": null
+    }
+  }
+}
