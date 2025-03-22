@@ -57,26 +57,26 @@ class MessengerSession:
     def __init__(self, sender_id: str):
         self.sender_id = sender_id
         self.claude_client = ClaudeChat(api_key)
-        
+       
         # Initialize conversation manager with legal rules
         self.claude_client.initialize_rules(criteria_file)
-        
+       
         # Conversation state
         self.conversation_active = True
         self.last_activity = time.time()
         self.handled_by_agent = False
         self.agent_id = None
-        
+       
         logger.info(f"New session created for sender {sender_id}")
-    
+   
     def process_message(self, message_text: str) -> None:
         """Process a message from the user and generate a response."""
         if not self.conversation_active:
             return
-            
+           
         # Update activity timestamp
         self.last_activity = time.time()
-        
+       
         # Check if this conversation is now handled by an agent
         if self.handled_by_agent:
             # Store the message in DB for agent to see
@@ -84,61 +84,61 @@ class MessengerSession:
             # Send acknowledgment to user
             self._send_message("Your message has been received. An agent will respond shortly.")
             return
-        
+       
         # Process the message using Claude's conversation manager
         try:
             # Rather than using the terminal interface, we feed the message directly
             response_data = self.claude_client.conversation_manager.analyze_response(message_text)
-            
+           
             # Handle errors
             if 'error' in response_data:
                 self._send_message(response_data['error'])
                 return
-                
+               
             # Handle case ineligibility
             if 'eligible' in response_data and not response_data['eligible']:
                 self._send_message(response_data['reason'])
                 self._transition_to_agent("Case ineligible - needs human review")
                 return
-                
+               
             # Handle ending the chat (e.g., after lawyer question)
             if response_data.get('end_chat'):
                 farewell_message = response_data.get('farewell_message', "Thank you for your time.")
                 self._send_message(farewell_message)
                 self.conversation_active = False
                 return
-            
+           
             # Get the next question to ask
             next_question, is_control = self.claude_client.conversation_manager.get_next_question()
-            
+           
             # Handle control messages
             if is_control:
                 if self.claude_client.conversation_manager.empty_response_count >= 3:
                     self._send_message(next_question)
                     # We'll wait for their response in the next message
                     return
-            
+           
             # If we've completed all questions, transition to an agent
             if self.claude_client.conversation_manager.current_phase == 'complete':
                 self._send_message(next_question)  # Send the scheduling message
-                
+               
                 # Save the case data
                 self.claude_client.conversation_manager.save_case_data()
-                
+               
                 # Transition to agent with case ranking
                 ranking = self.claude_client.conversation_manager.case_data.get('ranking', 'normal')
                 points = self.claude_client.conversation_manager.case_data.get('points', 50)
                 self._transition_to_agent(f"Case completed - {ranking} priority ({points} points)")
                 return
-            
+           
             # Otherwise, send the next question
             self._send_message(next_question)
-            
+           
         except Exception as e:
             logger.error(f"Error processing message: {e}")
             self._send_message("I'm having trouble processing your message. Let me connect you with a live representative.")
             self._transition_to_agent("Error processing message")
-    
+   
     def _send_message(self, message_text: str) -> bool:
         """Send a message to the user via Messenger."""
         try:
@@ -149,47 +149,47 @@ class MessengerSession:
             }
             params = {"access_token": PAGE_ACCESS_TOKEN}
             response = requests.post(url, json=payload, params=params)
-            
+           
             if response.status_code != 200:
                 logger.error(f"Failed to send message: {response.text}")
                 return False
-                
+               
             return True
         except Exception as e:
             logger.error(f"Error sending message: {e}")
             return False
-    
+   
     def _store_message_for_agent(self, message_text: str) -> None:
         """Store a message in the database for an agent to view."""
         # In a production environment, this would save to your database
         # For now, we'll just log it
         logger.info(f"Message for agent from {self.sender_id}: {message_text}")
-        
+       
         # TODO: Implement database storage for agent dashboard
-    
+   
     def _transition_to_agent(self, reason: str) -> None:
         """Transition this conversation to be handled by a human agent via Facebook Inbox."""
         self.handled_by_agent = True
-        
+       
         # Log the transition for monitoring purposes
         logger.info(f"Conversation {self.sender_id} transitioned to agent. Reason: {reason}")
-        
+       
         # Save case data to your database for agents to reference
         try:
             self.claude_client.conversation_manager.save_case_data()
-            
+           
             # Get case details for the notification
             case_data = self.claude_client.conversation_manager.case_data
             age = case_data.get('age', 'Unknown')
             state = case_data.get('state', 'Unknown')
             ranking = case_data.get('ranking', 'normal')
             points = case_data.get('points', 0)
-            
+           
             # Create a case reference ID for tracking
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
             random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
             ref_id = f"{timestamp[-6:]}_{random_suffix}"
-            
+           
             # Prepare case data for agent notification
             notification_data = {
                 'sender_id': self.sender_id,
@@ -201,17 +201,17 @@ class MessengerSession:
                 'timestamp': timestamp,
                 'reason': reason
             }
-            
+           
             # Notify the user with case reference
             self._send_message(f"Thank you for providing your information. A team member will review your case (Ref: #{ref_id}) and continue this conversation shortly.")
-            
+           
             # Send notifications to appropriate agents
             notify_agents_about_case(notification_data)
-            
+           
         except Exception as e:
             logger.error(f"Error during agent transition: {e}")
             self._send_message("I'll connect you with a representative who can help you further. They'll review your information and respond shortly.")
-    
+   
     def send_welcome_message(self) -> None:
         """Send the initial welcome message to start the conversation."""
         initial_question = self.claude_client.conversation_manager.phases['initial']['question']
@@ -222,26 +222,26 @@ def verify_fb_signature(request_data, signature_header):
     if not APP_SECRET:
         logger.warning("APP_SECRET not configured, skipping signature verification")
         return True
-        
+       
     if not signature_header:
         logger.warning("No signature header provided")
         return False
-    
+   
     # The signature header format is "sha1=<signature>"
     elements = signature_header.split('=')
     if len(elements) != 2:
         logger.warning(f"Invalid signature format: {signature_header}")
         return False
-        
+       
     signature = elements[1]
-    
+   
     # Calculate expected signature
     expected_signature = hmac.new(
         bytes(APP_SECRET, 'utf-8'),
         msg=request_data,
         digestmod=hashlib.sha1
     ).hexdigest()
-    
+   
     return hmac.compare_digest(signature, expected_signature)
 
 def cleanup_inactive_sessions():
@@ -252,16 +252,16 @@ def cleanup_inactive_sessions():
         try:
             current_time = time.time()
             inactive_threshold = 3600  # 1 hour
-            
+           
             to_remove = []
             for sender_id, session in active_conversations.items():
                 if current_time - session.last_activity > inactive_threshold:
                     to_remove.append(sender_id)
-            
+           
             for sender_id in to_remove:
                 logger.info(f"Removing inactive session for {sender_id}")
                 del active_conversations[sender_id]
-                
+               
             # Sleep for 15 minutes before next cleanup
             time.sleep(900)
         except Exception as e:
@@ -280,11 +280,20 @@ def verify_webhook():
     mode = request.args.get('hub.mode', '')
     token = request.args.get('hub.verify_token', '')
     challenge = request.args.get('hub.challenge', '')
-    
+   
+    # Add detailed logging for verification attempts
+    logger.info(f"Verification attempt - Mode: {mode}, Token: {token}, Challenge: {challenge}")
+   
     if mode == 'subscribe' and token == VERIFY_TOKEN:
-        logger.info("Webhook verified")
-        return challenge
-        
+        logger.info("Webhook verified successfully")
+        try:
+            # Convert challenge to int and back to string for HTTP response
+            return str(int(challenge))
+        except ValueError:
+            # Fallback if conversion fails
+            logger.warning(f"Challenge conversion failed, returning as is: {challenge}")
+            return challenge
+       
     logger.warning(f"Webhook verification failed. Mode: {mode}, Token: {token}")
     return 'Verification Failed', 403
 
@@ -298,30 +307,30 @@ def webhook():
     if not verify_fb_signature(request.get_data(), signature):
         logger.warning("Invalid request signature")
         return 'Invalid signature', 403
-    
+   
     data = request.json
-    
+   
     # Check if this is a page subscription
     if data.get('object') != 'page':
         return 'Not a page subscription', 404
-    
+   
     # Process each entry (there may be multiple)
     for entry in data.get('entry', []):
         # Process each messaging event
         for messaging_event in entry.get('messaging', []):
             sender_id = messaging_event.get('sender', {}).get('id')
-            
+           
             if not sender_id:
                 continue
-                
+               
             # Check for message event
             if 'message' in messaging_event:
                 message_text = messaging_event.get('message', {}).get('text')
-                
+               
                 if not message_text:
                     # Handle non-text messages (e.g., attachments)
                     continue
-                
+               
                 # Get or create a session for this sender
                 if sender_id not in active_conversations:
                     active_conversations[sender_id] = MessengerSession(sender_id)
@@ -330,21 +339,21 @@ def webhook():
                 else:
                     # Process the message in an existing conversation
                     active_conversations[sender_id].process_message(message_text)
-            
+           
             # Handle postback events (e.g., button clicks)
             elif 'postback' in messaging_event:
                 payload = messaging_event.get('postback', {}).get('payload')
-                
+               
                 if not payload:
                     continue
-                
+               
                 # Get or create a session for this sender
                 if sender_id not in active_conversations:
                     active_conversations[sender_id] = MessengerSession(sender_id)
-                
+               
                 # Process the postback as if it were a text message
                 active_conversations[sender_id].process_message(payload)
-    
+   
     return 'Success', 200
 
 @app.route('/', methods=['GET'])
@@ -361,16 +370,21 @@ def health_check():
     })
 
 if __name__ == '__main__':
-    # Check if required environment variables are set
+    # Improved environment variable checking
+    missing_vars = []
+   
     if not VERIFY_TOKEN:
-        logger.error("MESSENGER_VERIFY_TOKEN not set. Please update your .env file.")
-        exit(1)
-        
+        missing_vars.append("MESSENGER_VERIFY_TOKEN")
+       
     if not PAGE_ACCESS_TOKEN:
-        logger.error("PAGE_ACCESS_TOKEN not set. Please update your .env file.")
+        missing_vars.append("PAGE_ACCESS_TOKEN")
+   
+    if missing_vars:
+        logger.error(f"Missing required environment variables: {', '.join(missing_vars)}. Please update your .env file.")
         exit(1)
-    
+   
     # Start the Flask development server
     # In production, use a proper WSGI server like Gunicorn
     port = int(os.getenv('PORT', 5000))
+    logger.info(f"Starting server on port {port}")
     app.run(host='0.0.0.0', port=port)
