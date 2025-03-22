@@ -1,0 +1,12 @@
+[
+  {
+    "name": "Ian Thompson",
+    "email": "ian@kasekarma.com",
+    "active": true,
+    "priorities": ["low", "normal", "high", "very high"],
+    "working_hours": {
+      "start": 0,
+      "end": 24
+    }
+  }
+]
