@@ -1,4 +1,5 @@
 import json
+import sys
 import os
 import logging
 import time
@@ -21,16 +22,36 @@ from Chat_Deploy import ClaudeChat, ConversationManager, ModelConfiguration
 # Import agent notification system
 from agent_notifications import notify_agents_about_case
 
-# Configure logging
+# Create logs directory in your application directory (which you own)
+log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+os.makedirs(log_dir, exist_ok=True)
+log_file = os.path.join(log_dir, 'messenger_webhook.log')
+
+# Write a test file immediately to verify permissions
+try:
+    with open(os.path.join(log_dir, 'startup_test.txt'), 'w') as f:
+        f.write(f"Startup test at {datetime.now()}")
+    print(f"Successfully wrote test file to {log_dir}")
+except Exception as e:
+    print(f"FAILED to write test file: {e}")
+
+# Set up logging with a clear format
+from logging.handlers import RotatingFileHandler
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("messenger_webhook.log"),
+        RotatingFileHandler(
+            log_file,
+            maxBytes=5*1024*1024,  # 5MB
+            backupCount=3,
+            mode='a+'
+        ),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger("MessengerWebhook")
+logger.info(f"=== STARTUP: Application initializing in {os.getcwd()} ===")
 
 # Load environment variables
 load_dotenv()
@@ -687,6 +708,12 @@ def run_basic_tests():
         return False
 
 if __name__ == '__main__':
+
+    # Print working directory and environment info at startup
+    print(f"Starting application in: {os.getcwd()}")
+    logger.info(f"Python executable: {sys.executable}")
+    logger.info(f"Environment variables: VERIFY_TOKEN exists: {bool(VERIFY_TOKEN)}, PAGE_ACCESS_TOKEN exists: {bool(PAGE_ACCESS_TOKEN)}")
+
     # Improved environment variable checking
     missing_vars = []
    
