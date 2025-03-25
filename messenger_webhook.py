@@ -8,6 +8,8 @@ import requests
 import threading
 import random
 import string
+import unittest
+from unittest.mock import patch, MagicMock
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 from typing import Dict, Any, Optional
@@ -139,25 +141,40 @@ class MessengerSession:
             self._send_message("I'm having trouble processing your message. Let me connect you with a live representative.")
             self._transition_to_agent("Error processing message")
    
-    def _send_message(self, message_text: str) -> bool:
-        """Send a message to the user via Messenger."""
-        try:
-            url = f"https://graph.facebook.com/v18.0/me/messages"
-            payload = {
-                "recipient": {"id": self.sender_id},
-                "message": {"text": message_text}
-            }
-            params = {"access_token": PAGE_ACCESS_TOKEN}
-            response = requests.post(url, json=payload, params=params)
-           
-            if response.status_code != 200:
+    def _send_message(self, message_text: str, retry_count=3) -> bool:
+        """Send a message to the user via Messenger with retries."""
+        attempt = 0
+        
+        while attempt < retry_count:
+            try:
+                url = f"https://graph.facebook.com/v18.0/me/messages"
+                payload = {
+                    "recipient": {"id": self.sender_id},
+                    "message": {"text": message_text}
+                }
+                params = {"access_token": PAGE_ACCESS_TOKEN}
+                response = requests.post(url, json=payload, params=params)
+                
+                if response.status_code == 200:
+                    return True
+                    
+                # Handle rate limiting (code 4) with exponential backoff
+                error_data = response.json().get('error', {})
+                if error_data.get('code') == 4:
+                    wait_time = 2 ** attempt
+                    logger.warning(f"Rate limited, waiting {wait_time}s before retry")
+                    time.sleep(wait_time)
+                    attempt += 1
+                    continue
+                    
                 logger.error(f"Failed to send message: {response.text}")
                 return False
-               
-            return True
-        except Exception as e:
-            logger.error(f"Error sending message: {e}")
-            return False
+                    
+            except Exception as e:
+                logger.error(f"Error sending message: {e}")
+                attempt += 1
+                
+        return False
    
     def _store_message_for_agent(self, message_text: str) -> None:
         """Store a message in the database for an agent to view."""
@@ -369,6 +386,306 @@ def health_check():
         'active_conversations': len(active_conversations)
     })
 
+# New Testing Routes
+
+@app.route('/test/verify', methods=['GET'])
+def test_verification():
+    """Test the webhook verification process."""
+    try:
+        # Simulate a verification request
+        test_challenge = "1234567890"
+        test_url = f"/webhook?hub.mode=subscribe&hub.verify_token={VERIFY_TOKEN}&hub.challenge={test_challenge}"
+        with app.test_client() as client:
+            response = client.get(test_url)
+            
+        if response.status_code == 200 and response.data.decode('utf-8') == test_challenge:
+            return jsonify({
+                'status': 'success',
+                'message': 'Webhook verification is correctly configured'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': f'Webhook verification failed: {response.status_code}, {response.data}'
+            }), 500
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error testing verification: {str(e)}'
+        }), 500
+
+@app.route('/test/send', methods=['POST'])
+def test_send_message():
+    """Test sending a message to a user."""
+    try:
+        data = request.json
+        if not data or 'recipient_id' not in data or 'message' not in data:
+            return jsonify({
+                'status': 'error',
+                'message': 'Missing required fields: recipient_id, message'
+            }), 400
+            
+        recipient_id = data['recipient_id']
+        message = data['message']
+        
+        # Create a temporary session if needed
+        if recipient_id not in active_conversations:
+            session = MessengerSession(recipient_id)
+        else:
+            session = active_conversations[recipient_id]
+            
+        # Try to send the message
+        success = session._send_message(message)
+        
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': 'Test message sent successfully'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to send test message'
+            }), 500
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error sending test message: {str(e)}'
+        }), 500
+
+@app.route('/test/token', methods=['GET'])
+def test_page_access_token():
+    """Test if the page access token is valid."""
+    try:
+        url = f"https://graph.facebook.com/v18.0/me"
+        params = {"access_token": PAGE_ACCESS_TOKEN}
+        response = requests.get(url, params=params)
+        
+        if response.status_code == 200:
+            page_data = response.json()
+            return jsonify({
+                'status': 'success',
+                'page_id': page_data.get('id'),
+                'page_name': page_data.get('name'),
+                'message': 'Page access token is valid'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': f'Invalid page access token: {response.text}'
+            }), 500
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error testing page access token: {str(e)}'
+        }), 500
+
+@app.route('/test/simulate', methods=['POST'])
+def test_simulate_webhook():
+    """Simulate a Facebook webhook event locally."""
+    try:
+        data = request.json
+        if not data:
+            return jsonify({
+                'status': 'error',
+                'message': 'Missing webhook event data'
+            }), 400
+            
+        # Create a simulated webhook event if not provided
+        if 'object' not in data:
+            sender_id = data.get('sender_id', '123456789')
+            message_text = data.get('message', 'This is a test message')
+            
+            data = {
+                'object': 'page',
+                'entry': [{
+                    'id': '1234567890',
+                    'time': int(time.time() * 1000),
+                    'messaging': [{
+                        'sender': {'id': sender_id},
+                        'recipient': {'id': '1234567890'},
+                        'timestamp': int(time.time() * 1000),
+                        'message': {
+                            'mid': 'mid.$cAAFjbk5JQiRnjVgMQFkfvr_mHmkF',
+                            'text': message_text
+                        }
+                    }]
+                }]
+            }
+        
+        # Process the webhook event
+        with app.test_client() as client:
+            # We need to bypass signature verification for this test
+            with patch('__main__.verify_fb_signature', return_value=True):
+                response = client.post('/webhook', json=data)
+        
+        if response.status_code == 200:
+            return jsonify({
+                'status': 'success',
+                'message': 'Webhook event processed successfully'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': f'Failed to process webhook event: {response.status_code}, {response.data}'
+            }), 500
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error simulating webhook event: {str(e)}'
+        }), 500
+
+@app.route('/test/connection', methods=['GET'])
+def test_full_connection():
+    """Test the full connection pipeline to Facebook."""
+    results = {
+        'verify_token': {'status': 'pending'},
+        'page_access_token': {'status': 'pending'},
+        'webhook_verification': {'status': 'pending'},
+        'message_sending': {'status': 'pending'}
+    }
+    
+    try:
+        # Test 1: Check environment variables
+        if not VERIFY_TOKEN:
+            results['verify_token'] = {'status': 'error', 'message': 'VERIFY_TOKEN is not set'}
+        else:
+            results['verify_token'] = {'status': 'success'}
+            
+        # Test 2: Check page access token
+        if not PAGE_ACCESS_TOKEN:
+            results['page_access_token'] = {'status': 'error', 'message': 'PAGE_ACCESS_TOKEN is not set'}
+        else:
+            try:
+                url = f"https://graph.facebook.com/v18.0/me"
+                params = {"access_token": PAGE_ACCESS_TOKEN}
+                response = requests.get(url, params=params)
+                
+                if response.status_code == 200:
+                    page_data = response.json()
+                    results['page_access_token'] = {
+                        'status': 'success',
+                        'page_id': page_data.get('id'),
+                        'page_name': page_data.get('name')
+                    }
+                else:
+                    results['page_access_token'] = {
+                        'status': 'error', 
+                        'message': f'Invalid token: {response.text}'
+                    }
+            except Exception as e:
+                results['page_access_token'] = {
+                    'status': 'error',
+                    'message': f'Error testing token: {str(e)}'
+                }
+                
+        # Test 3: Test webhook verification
+        try:
+            test_challenge = "1234567890"
+            test_url = f"/webhook?hub.mode=subscribe&hub.verify_token={VERIFY_TOKEN}&hub.challenge={test_challenge}"
+            with app.test_client() as client:
+                response = client.get(test_url)
+                
+            if response.status_code == 200 and response.data.decode('utf-8') == test_challenge:
+                results['webhook_verification'] = {'status': 'success'}
+            else:
+                results['webhook_verification'] = {
+                    'status': 'error',
+                    'message': f'Verification failed: {response.status_code}, {response.data}'
+                }
+        except Exception as e:
+            results['webhook_verification'] = {
+                'status': 'error',
+                'message': f'Error testing verification: {str(e)}'
+            }
+            
+        # Test 4: Try sending a test echo message (if we have a valid page token)
+        if results['page_access_token']['status'] == 'success':
+            try:
+                # This won't actually send to a real user unless recipient exists
+                # It will just test the API call
+                test_recipient = "100000000000000"  # Placeholder ID
+                url = f"https://graph.facebook.com/v18.0/me/messages"
+                payload = {
+                    "recipient": {"id": test_recipient},
+                    "message": {"text": "API connection test"}
+                }
+                params = {"access_token": PAGE_ACCESS_TOKEN}
+                
+                # Make request but don't verify actual delivery
+                response = requests.post(url, json=payload, params=params)
+                
+                # Check if the API accepts our request
+                # Even with an invalid recipient, we should get a specific error code
+                # rather than an authentication error
+                if response.status_code == 200:
+                    results['message_sending'] = {'status': 'success'}
+                else:
+                    error_data = response.json().get('error', {})
+                    # If the error is about an invalid recipient, that's actually good
+                    # It means our token is valid
+                    if error_data.get('code') == 100 and "Invalid user id" in error_data.get('message', ''):
+                        results['message_sending'] = {
+                            'status': 'success',
+                            'note': 'Test used non-existent recipient but API connection is working'
+                        }
+                    else:
+                        results['message_sending'] = {
+                            'status': 'error',
+                            'message': f'API error: {response.text}'
+                        }
+            except Exception as e:
+                results['message_sending'] = {
+                    'status': 'error',
+                    'message': f'Error testing message sending: {str(e)}'
+                }
+        
+        # Overall result
+        all_success = all(test['status'] == 'success' for test in results.values())
+        overall_status = 'success' if all_success else 'error'
+        
+        return jsonify({
+            'status': overall_status,
+            'results': results,
+            'message': 'All connection tests passed!' if all_success else 'Some connection tests failed'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error running connection tests: {str(e)}',
+            'results': results
+        }), 500
+
+def run_basic_tests():
+    """Run basic tests when the application starts."""
+    try:
+        logger.info("Running basic tests...")
+        
+        # Test 1: Check environment variables
+        if not VERIFY_TOKEN or not PAGE_ACCESS_TOKEN:
+            logger.error("Missing required environment variables")
+            return False
+            
+        # Test 2: Check page access token (but don't fail if it doesn't work)
+        try:
+            url = f"https://graph.facebook.com/v18.0/me"
+            params = {"access_token": PAGE_ACCESS_TOKEN}
+            response = requests.get(url, params=params)
+            
+            if response.status_code == 200:
+                logger.info(f"Page access token is valid. Page: {response.json().get('name', 'Unknown')}")
+            else:
+                logger.warning(f"Page access token may be invalid: {response.text}")
+        except Exception as e:
+            logger.warning(f"Couldn't test page access token: {e}")
+        
+        logger.info("Basic tests completed")
+        return True
+    except Exception as e:
+        logger.error(f"Error running basic tests: {e}")
+        return False
+
 if __name__ == '__main__':
     # Improved environment variable checking
     missing_vars = []
@@ -383,6 +700,9 @@ if __name__ == '__main__':
         logger.error(f"Missing required environment variables: {', '.join(missing_vars)}. Please update your .env file.")
         exit(1)
    
+    # Run basic tests
+    run_basic_tests()
+    
     # Start the Flask development server
     # In production, use a proper WSGI server like Gunicorn
     port = int(os.getenv('PORT', 5000))
