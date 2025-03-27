@@ -22,12 +22,66 @@ logging.basicConfig(
 )
 logger = logging.getLogger("CPChatbot")
 
+
+# At the top of the file, add:
+try:
+    import anthropic
+    logger.info(f"Anthropic SDK version: {anthropic.__version__}")
+except Exception as e:
+    logger.error(f"Error importing anthropic: {e}")
+
 # Constants
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds
 MAX_RESPONSE_LENGTH = 5000  # characters
 DEFAULT_TIMEOUT = 30  # seconds for API calls
 DATA_DIRECTORY = "case_data"
+
+class SafeAnthropicClient:
+    """Wrapper for Anthropic client to handle initialization issues."""
+    
+    def __init__(self, api_key):
+        try:
+            # Import version to log it
+            import anthropic
+            logger.info(f"Using Anthropic SDK version: {anthropic.__version__}")
+            
+            # Directly import Client with fully qualified name
+            from anthropic import Client
+            
+            # Create client with only the API key, no extra parameters
+            self.client = Client(api_key=api_key)
+            self.initialized = True
+            logger.info("Anthropic client initialized successfully")
+        except Exception as e:
+            logger.critical(f"Failed to initialize Anthropic client: {e}")
+            self.initialized = False
+    
+    def messages_create(self, *args, **kwargs):
+        """Wrapper for client.messages.create to handle initialization failures."""
+        if not hasattr(self, 'initialized') or not self.initialized:
+            logger.error("Cannot create message: Anthropic client not initialized")
+            # Return an error message instead of a dummy response
+            from types import SimpleNamespace
+            error_response = SimpleNamespace()
+            error_content = SimpleNamespace()
+            error_content.text = "Sorry, I'm having trouble connecting to my services right now. Please try again later."
+            error_content.type = "text"
+            error_response.content = [error_content]
+            return error_response
+        
+        try:
+            return self.client.messages.create(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"Error creating message: {e}")
+            # Return an error message
+            from types import SimpleNamespace
+            error_response = SimpleNamespace()
+            error_content = SimpleNamespace()
+            error_content.text = "Sorry, I'm having trouble processing your request right now. Please try again later."
+            error_content.type = "text"
+            error_response.content = [error_content]
+            return error_response
 
 class ClaudeNLU:
     """
@@ -378,7 +432,7 @@ class ClaudeNLU:
         
         for attempt in range(MAX_RETRIES):
             try:
-                response = self.client.messages.create(
+                response = self.client.messages_create(
                     model=self.model,
                     system=system_prompt,
                     messages=[
@@ -391,26 +445,12 @@ class ClaudeNLU:
                 
                 # Extract and return the response content
                 return response.content[0].text.strip()
-            except anthropic.RateLimitError:
-                wait_time = (attempt + 1) * RETRY_DELAY
-                logger.warning(f"Rate limit hit. Waiting {wait_time}s before retry {attempt+1}/{MAX_RETRIES}")
-                time.sleep(wait_time)
-            except anthropic.APITimeoutError:
-                wait_time = (attempt + 1) * RETRY_DELAY
-                logger.warning(f"API timeout. Waiting {wait_time}s before retry {attempt+1}/{MAX_RETRIES}")
-                time.sleep(wait_time)
-            except anthropic.APIError as e:
-                if attempt < MAX_RETRIES - 1:
-                    wait_time = (attempt + 1) * RETRY_DELAY
-                    logger.warning(f"API error: {e}. Waiting {wait_time}s before retry {attempt+1}/{MAX_RETRIES}")
-                    time.sleep(wait_time)
-                else:
-                    logger.error(f"API error after {MAX_RETRIES} attempts: {e}")
-                    return ""
             except Exception as e:
-                logger.error(f"Unexpected error querying Claude: {e}")
-                return ""
-                
+                # Handle all exceptions more generally
+                wait_time = (attempt + 1) * RETRY_DELAY
+                logger.warning(f"API error: {e}. Waiting {wait_time}s before retry {attempt+1}/{MAX_RETRIES}")
+                time.sleep(wait_time)
+                    
         logger.error(f"Failed to get response from Claude after {MAX_RETRIES} attempts")
         return ""
     
@@ -1421,26 +1461,69 @@ class ClaudeChat:
     Main chatbot class that coordinates conversation flow and model interactions.
     Now with integrated Claude NLU capabilities.
     """
+    def _configure_environment(self):
+        """Configure environment variables for Dreamhost compatibility."""
+        import os
+        import sys
+        
+        # Disable proxy settings
+        os.environ['HTTP_PROXY'] = ''
+        os.environ['HTTPS_PROXY'] = ''
+        os.environ['http_proxy'] = ''
+        os.environ['https_proxy'] = ''
+        os.environ['NO_PROXY'] = '*'
+        os.environ['no_proxy'] = '*'
+        
+        # Configure SSL certificate verification if needed
+        if 'dreamhost' in os.environ.get('SERVER_SOFTWARE', '').lower():
+            os.environ['REQUESTS_CA_BUNDLE'] = '/etc/ssl/certs/ca-certificates.crt'
+        
+        # Ensure python paths are correct for Dreamhost
+        dreamhost_paths = [
+            '/home/z31b4r1k3v0rk/.local/lib/python3.9/site-packages',
+            '/usr/local/lib/python3.9/dist-packages'
+        ]
+        
+        for path in dreamhost_paths:
+            if path not in sys.path and os.path.exists(path):
+                sys.path.append(path)
+                
+        logger.info(f"Environment configured for Dreamhost compatibility")
+
+
     def __init__(self, api_key: str, max_examples: int = 3):
         try:
-            model_config = ModelConfiguration()
-            self.client = anthropic.Client(api_key=api_key)
-            self.model = model_config.model_version
+            # Configure Dreamhost-specific environment
+            self._configure_environment()
             
+            model_config = ModelConfiguration()
+            
+            # Use our safe wrapper instead
+            self.client = SafeAnthropicClient(api_key)
+            
+            self.model = model_config.model_version
             self.max_examples = max_examples
             self.conversation_history = []
             self.legal_rules = None
             self.shutdown_requested = False
             
-            # Register signal handlers for graceful shutdown
-            signal.signal(signal.SIGINT, self._signal_handler)
-            signal.signal(signal.SIGTERM, self._signal_handler)
+            # Don't use signal handlers in web context
+            if __name__ == "__main__":
+                # Only register signal handlers in main thread of main interpreter
+                signal.signal(signal.SIGINT, self._signal_handler)
+                signal.signal(signal.SIGTERM, self._signal_handler)
             
             logger.info(f"ClaudeChat initialized with model {self.model}")
         except Exception as e:
             logger.critical(f"Fatal error initializing ClaudeChat: {e}")
+            # Create minimal functioning chat even if initialization fails
+            self.client = None
+            self.model = "claude-3-5-sonnet-20241022"  # Fallback model
+            self.max_examples = max_examples
+            self.conversation_history = []
+            self.legal_rules = None
+            self.shutdown_requested = False
             raise
-
     def _signal_handler(self, sig, frame):
         """Handle termination signals gracefully."""
         logger.info("Received shutdown signal. Preparing to exit...")
@@ -1677,6 +1760,15 @@ def main():
     Main entry point for the chatbot application.
     """
     try:
+        # Debug environment variables
+        logger.info("Debugging environment variables:")
+        for key, value in os.environ.items():
+            # Don't log sensitive values
+            if 'key' in key.lower() or 'token' in key.lower() or 'secret' in key.lower() or 'password' in key.lower():
+                logger.info(f"ENV: {key}=<REDACTED>")
+            else:
+                logger.info(f"ENV: {key}={value}")
+        
         # Create data directory if it doesn't exist
         os.makedirs(DATA_DIRECTORY, exist_ok=True)
         
