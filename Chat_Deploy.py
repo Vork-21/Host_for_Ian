@@ -668,7 +668,7 @@ class ConversationManager:
     """
     def __init__(self, legal_rules: Dict, claude_client=None, model_version=None):
         self.legal_rules = legal_rules
-        self.current_phase = 'initial'
+        self.current_phase = 'age'  # Start directly at age phase instead of initial
         self.empty_response_count = 0
         self.case_data = {
             'age': None,
@@ -677,6 +677,17 @@ class ConversationManager:
             'difficult_delivery': False,  # Track delivery difficulty
             'points': 50,  # Starting with a base score of 50
             'ranking': 'normal'  # Default ranking (low, normal, high, very high)
+        }
+        
+        # Add this new field to track implied answers to future questions
+        self.implied_answers = {
+            'nicu': None,
+            'nicu_duration': None,
+            'hie_therapy': None,
+            'brain_scan': None,
+            'milestones': None,
+            'lawyer': None,
+            'state': None
         }
         
         # Initialize Claude NLU if client is provided
@@ -689,11 +700,6 @@ class ConversationManager:
                 logger.error(f"Failed to initialize Claude NLU: {e}")
         
         self.phases = {
-            'initial': {
-                'complete': False,
-                'question': "Hi, If your child has or may have CEREBRAL PALSY please message us YES to see if we can offer FREE help for you and your family today!",
-                'value': None
-            },
             'age': {
                 'complete': False,
                 'question': "How old is your child with CP?",
@@ -930,6 +936,85 @@ class ConversationManager:
         
         return True, None
 
+    def _analyze_for_implied_answers(self, message: str) -> None:
+        """
+        Analyzes a message for information that implies answers to other questions.
+        Updates the implied_answers dictionary with any found information.
+        """
+        if not message:
+            return
+            
+        message_lower = message.lower()
+        
+        # Check for NICU mentions
+        nicu_indicators = ['nicu', 'intensive care', 'incubator', 'special care']
+        nicu_negative = ['didn\'t go', 'did not go', 'no nicu', 'wasn\'t in', 'never went']
+        
+        if any(indicator in message_lower for indicator in nicu_indicators):
+            # Check if it's a negative mention
+            if any(neg in message_lower for neg in nicu_negative):
+                self.implied_answers['nicu'] = False
+            else:
+                self.implied_answers['nicu'] = True
+                
+                # If NICU is mentioned, check for duration
+                try:
+                    if self.nlu:
+                        duration_days = self.nlu.interpret_duration(message)
+                        if duration_days > 0:
+                            self.implied_answers['nicu_duration'] = duration_days
+                    else:
+                        duration_days = self._legacy_duration_parsing(message)
+                        if duration_days > 0:
+                            self.implied_answers['nicu_duration'] = duration_days
+                except Exception as e:
+                    logger.error(f"Error parsing implied NICU duration: {e}")
+        
+        # Check for HIE/cooling therapy mentions
+        cooling_indicators = ['cooling', 'hypothermia', 'hie therapy', 'head cool', 'cooling blanket', 'therapeutic hypothermia']
+        if any(indicator in message_lower for indicator in cooling_indicators):
+            self.implied_answers['hie_therapy'] = True
+        
+        # Check for brain scan/MRI mentions
+        scan_indicators = ['mri', 'brain scan', 'head scan', 'cat scan', 'ct scan', 'ultrasound', 'sonogram', 'imaging']
+        if any(indicator in message_lower for indicator in scan_indicators):
+            self.implied_answers['brain_scan'] = True
+        
+        # Check for developmental delay mentions
+        delay_indicators = ['delay', 'behind', 'missing milestone', 'developmental', 'not meeting', 'therapy', 'pt', 'ot', 'speech', 'physical therapy']
+        if any(indicator in message_lower for indicator in delay_indicators):
+            self.implied_answers['milestones'] = True
+        
+        # Check for lawyer mentions
+        lawyer_indicators = ['lawyer', 'attorney', 'legal', 'law firm', 'lawsuit', 'case review', 'litigation']
+        lawyer_negative = ['no lawyer', 'haven\'t seen', 'didn\'t consult', 'not yet', 'looking for']
+        if any(indicator in message_lower for indicator in lawyer_indicators):
+            # Check if it's a negative mention
+            if any(neg in message_lower for neg in lawyer_negative):
+                self.implied_answers['lawyer'] = False
+            else:
+                self.implied_answers['lawyer'] = True
+        
+        # Try to extract state information
+        state_indicators = [
+            'born in', 'state of', 'from', 'in'
+        ]
+        for indicator in state_indicators:
+            if indicator in message_lower:
+                # Try to extract state after indicator
+                parts = message_lower.split(indicator)
+                if len(parts) > 1:
+                    potential_state = parts[1].strip()
+                    # Use NLU to interpret state if available
+                    if self.nlu:
+                        try:
+                            state = self.nlu.interpret_state(potential_state)
+                            if state:
+                                self.implied_answers['state'] = state
+                                break
+                        except Exception as e:
+                            logger.error(f"Error parsing implied state: {e}")
+
     def analyze_response(self, message: str) -> Dict:
         """
         Processes user response and updates conversation state.
@@ -957,14 +1042,11 @@ class ConversationManager:
         if message.lower() in help_indicators or any(indicator in message.lower() for indicator in help_indicators):
             return self._handle_help_request()
         
+        # Before processing based on current phase, analyze response for implied answers
+        self._analyze_for_implied_answers(message)
+        
         # Process based on current phase
         try:
-            if self.current_phase == 'initial':
-                # For the initial phase, flexible pattern matching
-                if self._is_affirmative(message):
-                    self.phases['initial']['complete'] = True
-                    self.phases['initial']['value'] = "yes"
-                    self.current_phase = 'age'
                     
             elif self.current_phase == 'age':
                 # Age parsing uses the analyze_age_response method which already incorporates NLU
@@ -1012,9 +1094,10 @@ class ConversationManager:
                         difficult_delivery = pregnancy_details.get('difficult_delivery', False)
                         self.case_data['difficult_delivery'] = difficult_delivery
                         
-                        # Update points based on delivery
+                        # Set sympathetic message for difficult delivery
                         if difficult_delivery:
                             self.update_points(15, "Difficult delivery reported")
+                            response_data['sympathy_message'] = "I'm sorry to hear that your delivery was difficult."
                         else:
                             self.update_points(-10, "No difficult delivery reported")
                             
@@ -1025,8 +1108,52 @@ class ConversationManager:
                 else:
                     # No NLU available, use regex parsing
                     self._legacy_pregnancy_parsing(message)
+                
+                # Check if NICU was mentioned in pregnancy response
+                if self.implied_answers['nicu'] is not None:
+                    logger.info(f"Skipping NICU question as it was answered in pregnancy response: {self.implied_answers['nicu']}")
+                    self.phases['nicu']['value'] = self.implied_answers['nicu']
+                    self.phases['nicu']['complete'] = True
                     
-                self.current_phase = 'nicu'
+                    if not self.implied_answers['nicu']:
+                        # Lower points if no NICU stay
+                        self.update_points(-15, "No NICU stay (implied)")
+                        # Skip to appropriate next phase
+                        if self.case_data.get('weeks_pregnant') is not None and self.case_data.get('weeks_pregnant') >= 36:
+                            self.current_phase = 'hie_therapy'
+                        else:
+                            self.current_phase = 'milestones'
+                    else:
+                        # Increase points for NICU stay
+                        self.update_points(10, "NICU stay required (implied)")
+                        
+                        # Check if NICU duration was also mentioned
+                        if self.implied_answers['nicu_duration'] is not None:
+                            self.phases['nicu_duration']['value'] = self.implied_answers['nicu_duration']
+                            self.phases['nicu_duration']['complete'] = True
+                            
+                            # Award points based on implied NICU duration
+                            duration_days = self.implied_answers['nicu_duration']
+                            if isinstance(duration_days, (int, float)) and duration_days > 0:
+                                if duration_days > 30:
+                                    self.update_points(15, "Extended NICU stay (>30 days) (implied)")
+                                elif duration_days > 14:
+                                    self.update_points(10, "Moderate NICU stay (>14 days) (implied)")
+                                elif duration_days > 7:
+                                    self.update_points(5, "Short NICU stay (>7 days) (implied)")
+                                else:
+                                    self.update_points(3, "Brief NICU stay (implied)")
+                            
+                            # Skip directly to appropriate next phase
+                            if self.case_data.get('weeks_pregnant') is not None and self.case_data.get('weeks_pregnant') >= 36:
+                                self.current_phase = 'hie_therapy'
+                            else:
+                                self.current_phase = 'brain_scan'
+                        else:
+                            self.current_phase = 'nicu_duration'
+                    
+                else:
+                    self.current_phase = 'nicu'
                     
             elif self.current_phase == 'nicu':
                 # Use Claude NLU to determine if NICU stay if available
@@ -1089,8 +1216,33 @@ class ConversationManager:
                 elif duration_days > 0:
                     self.update_points(3, "Brief NICU stay")
                 
+                # Check if HIE therapy was mentioned in NICU duration response
+                if self.implied_answers['hie_therapy'] is not None:
+                    logger.info(f"Skipping HIE therapy question as it was answered in NICU duration response: {self.implied_answers['hie_therapy']}")
+                    self.phases['hie_therapy']['value'] = self.implied_answers['hie_therapy']
+                    self.phases['hie_therapy']['complete'] = True
+                    
+                    if self.implied_answers['hie_therapy']:
+                        # Very high points for HIE therapy (strongest indicator)
+                        self.update_points(40, "Received HIE/head cooling therapy (implied)")
+                    
+                    self.current_phase = 'brain_scan'
+                # Check if brain scan was mentioned in NICU duration response
+                elif self.implied_answers['brain_scan'] is not None:
+                    logger.info(f"Skipping brain scan question as it was answered in NICU duration response: {self.implied_answers['brain_scan']}")
+                    self.phases['brain_scan']['value'] = self.implied_answers['brain_scan']
+                    self.phases['brain_scan']['complete'] = True
+                    
+                    if self.implied_answers['brain_scan']:
+                        # Higher points for brain scan evidence
+                        self.update_points(20, "Brain scan/MRI was performed (implied)")
+                    else:
+                        # Lower points if no scan
+                        self.update_points(-10, "No brain scan/MRI performed (implied)")
+                    
+                    self.current_phase = 'milestones'
                 # Always ask HIE for full term babies regardless of NICU stay
-                if self.case_data.get('weeks_pregnant') is not None and self.case_data.get('weeks_pregnant') >= 36:
+                elif self.case_data.get('weeks_pregnant') is not None and self.case_data.get('weeks_pregnant') >= 36:
                     self.current_phase = 'hie_therapy'
                 else:
                     self.current_phase = 'brain_scan'
@@ -1116,7 +1268,22 @@ class ConversationManager:
                     # Very high points for HIE therapy (strongest indicator)
                     self.update_points(40, "Received HIE/head cooling therapy")
                 
-                self.current_phase = 'brain_scan'
+                # Check if brain scan was mentioned in HIE therapy response
+                if self.implied_answers['brain_scan'] is not None:
+                    logger.info(f"Skipping brain scan question as it was answered in HIE therapy response: {self.implied_answers['brain_scan']}")
+                    self.phases['brain_scan']['value'] = self.implied_answers['brain_scan']
+                    self.phases['brain_scan']['complete'] = True
+                    
+                    if self.implied_answers['brain_scan']:
+                        # Higher points for brain scan evidence
+                        self.update_points(20, "Brain scan/MRI was performed (implied)")
+                    else:
+                        # Lower points if no scan
+                        self.update_points(-10, "No brain scan/MRI performed (implied)")
+                    
+                    self.current_phase = 'milestones'
+                else:
+                    self.current_phase = 'brain_scan'
                     
             elif self.current_phase == 'brain_scan':
                 # Use Claude NLU to determine if received brain scan if available
@@ -1142,7 +1309,22 @@ class ConversationManager:
                     # Lower points if no scan
                     self.update_points(-10, "No brain scan/MRI performed")
                     
-                self.current_phase = 'milestones'
+                # Check if developmental delays were mentioned in brain scan response
+                if self.implied_answers['milestones'] is not None:
+                    logger.info(f"Skipping milestones question as it was answered in brain scan response: {self.implied_answers['milestones']}")
+                    self.phases['milestones']['value'] = self.implied_answers['milestones']
+                    self.phases['milestones']['complete'] = True
+                    
+                    if self.implied_answers['milestones']:
+                        # Higher points for developmental issues
+                        self.update_points(15, "Developmental delays reported (implied)")
+                    else:
+                        # Lower points if no issues
+                        self.update_points(-5, "No developmental delays reported (implied)")
+                    
+                    self.current_phase = 'lawyer'
+                else:
+                    self.current_phase = 'milestones'
                     
             elif self.current_phase == 'milestones':
                 # Use Claude NLU to determine if has developmental delays if available
@@ -1168,7 +1350,52 @@ class ConversationManager:
                     # Lower points if no issues
                     self.update_points(-5, "No developmental delays reported")
                     
-                self.current_phase = 'lawyer'
+                # Check if lawyer consultation was mentioned in milestones response
+                if self.implied_answers['lawyer'] is not None:
+                    logger.info(f"Skipping lawyer question as it was answered in milestones response: {self.implied_answers['lawyer']}")
+                    self.phases['lawyer']['value'] = self.implied_answers['lawyer']
+                    self.phases['lawyer']['complete'] = True
+                    
+                    if self.implied_answers['lawyer']:
+                        # Adjust points slightly down for previous consultation
+                        self.update_points(-5, "Previous legal consultation (implied)")
+                        # Set a flag to end the chat with farewell message
+                        response_data['end_chat'] = True
+                        response_data['farewell_message'] = "We're glad to hear you're already getting your case reviewed and getting the help you need. We wish you and your family the best."
+                        
+                        # Save case data before ending
+                        success, error = self.save_case_data()
+                        if not success:
+                            logger.warning(f"Could not save case data: {error}")
+                            
+                        # Return immediately to prevent going to the next phase
+                        return response_data
+                    else:
+                        # Adjust points slightly up for new case
+                        self.update_points(5, "No previous legal consultation (implied)")
+                        
+                        # Check if state was mentioned in lawyer response
+                        if self.implied_answers['state'] is not None:
+                            logger.info(f"Using implied state from previous response: {self.implied_answers['state']}")
+                            self.phases['state']['value'] = self.implied_answers['state']
+                            self.phases['state']['complete'] = True
+                            self.case_data['state'] = self.implied_answers['state']
+                            
+                            # Check eligibility based on state and age
+                            is_eligible, reason = self.check_eligibility()
+                            if not is_eligible:
+                                return {'eligible': False, 'reason': reason}
+                                
+                            self.current_phase = 'complete'
+                            
+                            # Save answers and ranking to file
+                            success, error = self.save_case_data()
+                            if not success:
+                                logger.warning(f"Could not save case data: {error}")
+                        else:
+                            self.current_phase = 'state'
+                else:
+                    self.current_phase = 'lawyer'
                     
             elif self.current_phase == 'lawyer':
                 # Use Claude NLU to determine if previous legal consultation if available
@@ -1184,7 +1411,7 @@ class ConversationManager:
                 else:
                     prev_consultation = self._is_affirmative(message)
                     
-                self.phases['lawyer']['value'] = message
+                self.phases['lawyer']['value'] = prev_consultation  # Store boolean value 
                 self.phases['lawyer']['complete'] = True
                 
                 if prev_consultation:
@@ -1204,7 +1431,27 @@ class ConversationManager:
                 else:
                     # Adjust points slightly up for new case
                     self.update_points(5, "No previous legal consultation")
-                    self.current_phase = 'state'
+                    
+                    # Check if state was mentioned in lawyer response
+                    if self.implied_answers['state'] is not None:
+                        logger.info(f"Using implied state from previous response: {self.implied_answers['state']}")
+                        self.phases['state']['value'] = self.implied_answers['state']
+                        self.phases['state']['complete'] = True
+                        self.case_data['state'] = self.implied_answers['state']
+                        
+                        # Check eligibility based on state and age
+                        is_eligible, reason = self.check_eligibility()
+                        if not is_eligible:
+                            return {'eligible': False, 'reason': reason}
+                            
+                        self.current_phase = 'complete'
+                        
+                        # Save answers and ranking to file
+                        success, error = self.save_case_data()
+                        if not success:
+                            logger.warning(f"Could not save case data: {error}")
+                    else:
+                        self.current_phase = 'state'
                     
             elif self.current_phase == 'state':
                 # Use Claude NLU to extract state if available
@@ -1256,12 +1503,15 @@ class ConversationManager:
         yes_words = ['yes', 'yeah', 'yep', 'yup', 'sure', 'correct', 'right', 
                     'absolutely', 'definitely', 'indeed', 'affirmative', 'aye', 'y']
         
+        # Split message into words to check for exact word matches
+        message_words = message_lower.split()
+        
         # Check for exact matches (for short responses like "y")
         if message_lower in yes_words:
             return True
         
-        # Check if any word in the message is a yes word
-        if any(word in message_lower.split() for word in yes_words):
+        # Check if any word is a yes word
+        if any(word in yes_words for word in message_words):
             return True
             
         # Check for phrases that start with yes
@@ -1277,9 +1527,16 @@ class ConversationManager:
         if any(phrase in message_lower for phrase in positive_phrases):
             return True
             
-        # Check for uncertainty phrases (treat as affirmative)
-        uncertainty_phrases = ['i think', 'maybe', 'possibly', 'probably', 'might', 'could', 'unsure', 'not sure']
+        # Check for uncertainty phrases (only treat as affirmative if they contain positive indicators)
+        uncertainty_phrases = ['i think', 'maybe', 'possibly', 'probably', 'might have', 'could have', 'not sure']
+        
+        # Only consider uncertainty as affirmative if there's no negative indicator
+        negative_indicators = ['no', 'not', 'never', 'don\'t', 'didn\'t', 'doesn\'t', 'don\'t think']
         if any(phrase in message_lower for phrase in uncertainty_phrases):
+            # If has negative indicators, don't treat as affirmative
+            if any(neg in message_lower for neg in negative_indicators):
+                return False
+            # Otherwise treat uncertainty as affirmative
             return True
             
         return False
@@ -1388,7 +1645,7 @@ class ConversationManager:
             logger.error(f"Invalid current phase: {self.current_phase}")
             return {'error': "An error occurred. Let's continue with the current question."}
         
-        if current_index <= 1:  # We're at initial or age, can't go back
+        if current_index <= 0:  # We're at age, can't go back
             return {'error': "We can't go back any further. Let's continue with the current question."}
             
         # Move back one phase
@@ -1399,13 +1656,27 @@ class ConversationManager:
             logger.error(f"Previous phase {prev_phase} not found in self.phases")
             return {'error': "An error occurred. Let's continue with the current question."}
         
+        # Initialize missing fields if needed
         if 'complete' not in self.phases[prev_phase]:
             logger.error(f"Previous phase {prev_phase} missing 'complete' field")
             self.phases[prev_phase]['complete'] = False
             
         if 'question' not in self.phases[prev_phase]:
             logger.error(f"Previous phase {prev_phase} missing 'question' field")
-            self.phases[prev_phase]['question'] = f"Let's continue with the {prev_phase} phase."
+            # Set a default question based on the phase
+            default_questions = {
+                'initial': "Hi, If your child has or may have CEREBRAL PALSY please message us YES to see if we can offer FREE help for you and your family today!",
+                'age': "How old is your child with CP?",
+                'pregnancy': "How many weeks pregnant were you when your child was born? Did your child have a difficult delivery?",
+                'nicu': "Did your child go to the NICU after birth?",
+                'nicu_duration': "How long was your child in the NICU for after birth?",
+                'hie_therapy': "Did your child receive head cooling or HIE therapy while in the NICU?",
+                'brain_scan': "Did your child receive an MRI or Brain Scan while in the NICU?",
+                'milestones': "Is your child missing any milestones and or having any delays?",
+                'lawyer': "This sounds like it definitely needs to be looked into further. Have you had your case reviewed by a lawyer yet?",
+                'state': "In what State was your child born?"
+            }
+            self.phases[prev_phase]['question'] = default_questions.get(prev_phase, f"Let's continue with the {prev_phase} phase.")
             
         if 'value' not in self.phases[prev_phase]:
             logger.error(f"Previous phase {prev_phase} missing 'value' field")
@@ -1419,7 +1690,6 @@ class ConversationManager:
     def _handle_help_request(self) -> Dict:
         """Provide help or explanation for the current phase."""
         help_messages = {
-            'initial': "I'm asking if your child has or may have cerebral palsy. If so, please respond with 'Yes' so we can determine if we can offer assistance.",
             'age': "I need to know how old your child is. You can provide the age in years, like '5 years old' or just '5'.",
             'pregnancy': "I'm asking about your pregnancy length (in weeks) when your child was born, and if there were any complications during delivery.",
             'nicu': "NICU stands for Neonatal Intensive Care Unit. I'm asking if your child needed to stay in the NICU after birth.",
@@ -1431,7 +1701,12 @@ class ConversationManager:
             'state': "I need to know which US state your child was born in. This helps determine eligibility based on state-specific laws."
         }
         
-        return {'help': help_messages.get(self.current_phase, "I'm gathering information about your child's case to see if we can help. Please answer the current question as best you can.")}
+        # Check if we have a help message for the current phase
+        if self.current_phase in help_messages:
+            return {'help': help_messages[self.current_phase]}
+        else:
+            # Fallback help message
+            return {'help': "I'm gathering information about your child's case to see if we can help. Please answer the current question as best you can."}
 
     def get_next_question(self) -> Tuple[str, bool]:
         """
@@ -1524,6 +1799,21 @@ class ClaudeChat:
             self.legal_rules = None
             self.shutdown_requested = False
             raise
+    
+    def _is_first_yes(self, message: str) -> bool:
+        """Check if the first message is an affirmative response"""
+        if not message:
+            return False
+            
+        message_lower = message.lower().strip()
+        
+        # Check for common yes words and patterns
+        yes_patterns = ['yes', 'yeah', 'yep', 'yup', 'sure', 'y', 
+                        'correct', 'right', 'absolutely', 'definitely']
+        
+        # For the first message, we want to be more permissive with what counts as "yes"
+        return any(pattern in message_lower for pattern in yes_patterns) or message_lower.startswith('y')
+    
     def _signal_handler(self, sig, frame):
         """Handle termination signals gracefully."""
         logger.info("Received shutdown signal. Preparing to exit...")
@@ -1682,6 +1972,10 @@ class ClaudeChat:
         # Get next question
         next_question, is_control = self.conversation_manager.get_next_question()
         
+        # Add sympathy message for difficult delivery if applicable
+        if response_data.get('sympathy_message'):
+            next_question = f"{response_data['sympathy_message']} {next_question}"
+        
         # Handle control messages
         if is_control:
             if self.conversation_manager.empty_response_count >= 3:
@@ -1720,9 +2014,9 @@ class ClaudeChat:
             self.initialize_rules(criteria_file)
             self.example_conversations = self.load_examples(examples_dir)
             
-            # Start conversation
+            # Start conversation - DON'T show the initial question
             print("\nChatbot initialized. Type 'quit' to exit or 'help' for commands.")
-            print(f"\nAssistant: {self.conversation_manager.phases['initial']['question']}")
+            print("\nWaiting for first message...")
             
             # Main chat loop
             while not self.shutdown_requested:
@@ -1731,9 +2025,22 @@ class ClaudeChat:
                     if user_input.lower() == 'quit':
                         break
                         
+                    # For the first message, directly go to processing it as a response
+                    # The system now starts at the age question directly
+                    if len(self.conversation_history) == 0:
+                        # Show the age question directly for the first message
+                        age_question = self.conversation_manager.phases['age']['question']
+                        print(f"\nAssistant: {age_question}")
+                        
+                        # Add to conversation history
+                        self.conversation_history.append({"role": "user", "content": user_input})
+                        self.conversation_history.append({"role": "assistant", "content": age_question})
+                        continue
+                    
                     should_continue = self.process_message(user_input)
                     if not should_continue:
                         break
+                        
                 except KeyboardInterrupt:
                     # Let signal handler take care of this
                     break

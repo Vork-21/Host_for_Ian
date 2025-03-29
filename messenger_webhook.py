@@ -83,6 +83,14 @@ class MessengerSession:
        
         # Initialize conversation manager with legal rules
         self.claude_client.initialize_rules(criteria_file)
+        
+        # Set the current phase to age immediately
+        self.claude_client.conversation_manager.current_phase = 'age'
+        
+        # Mark initial phase as complete
+        if 'initial' in self.claude_client.conversation_manager.phases:
+            self.claude_client.conversation_manager.phases['initial']['complete'] = True
+            self.claude_client.conversation_manager.phases['initial']['value'] = "yes"
        
         # Conversation state
         self.conversation_active = True
@@ -130,6 +138,11 @@ class MessengerSession:
                 self._send_message(farewell_message)
                 self.conversation_active = False
                 return
+            
+            # Add sympathy message for difficult delivery if applicable
+            sympathy_message = ""
+            if response_data.get('sympathy_message'):
+                sympathy_message = response_data.get('sympathy_message') + " "
            
             # Get the next question to ask
             next_question, is_control = self.claude_client.conversation_manager.get_next_question()
@@ -154,8 +167,8 @@ class MessengerSession:
                 self._transition_to_agent(f"Case completed - {ranking} priority ({points} points)")
                 return
            
-            # Otherwise, send the next question
-            self._send_message(next_question)
+            # Otherwise, send the next question (with sympathy message if applicable)
+            self._send_message(sympathy_message + next_question)
            
         except Exception as e:
             logger.error(f"Error processing message: {e}")
@@ -253,9 +266,12 @@ class MessengerSession:
             self._send_message("I'll connect you with a representative who can help you further. They'll review your information and respond shortly.")
    
     def send_welcome_message(self) -> None:
-        """Send the initial welcome message to start the conversation."""
-        initial_question = self.claude_client.conversation_manager.phases['initial']['question']
-        self._send_message(initial_question)
+        """Send the age question directly to start the conversation."""
+        # Use the age question instead of initial question
+        age_question = self.claude_client.conversation_manager.phases['age']['question']
+        # Log the question being sent for debugging
+        logger.info(f"Sending first message to {self.sender_id}: {age_question}")
+        self._send_message(age_question)
 
 def verify_fb_signature(request_data, signature_header):
     """Verify that the request is properly signed by Facebook."""
