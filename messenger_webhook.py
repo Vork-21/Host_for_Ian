@@ -84,14 +84,14 @@ class MessengerSession:
         # Initialize conversation manager with legal rules
         self.claude_client.initialize_rules(criteria_file)
         
-        # Set the current phase to age immediately
-        self.claude_client.conversation_manager.current_phase = 'age'
-        
-        # Mark initial phase as complete
+        # COMPLETELY REMOVE the initial phase
         if 'initial' in self.claude_client.conversation_manager.phases:
-            self.claude_client.conversation_manager.phases['initial']['complete'] = True
-            self.claude_client.conversation_manager.phases['initial']['value'] = "yes"
-       
+            del self.claude_client.conversation_manager.phases['initial']
+        
+        # Set current phase to age
+        self.claude_client.conversation_manager.current_phase = 'age'
+    
+    # Rest of your initialization code...
         # Conversation state
         self.conversation_active = True
         self.last_activity = time.time()
@@ -266,11 +266,9 @@ class MessengerSession:
             self._send_message("I'll connect you with a representative who can help you further. They'll review your information and respond shortly.")
    
     def send_welcome_message(self) -> None:
-        """Send the age question directly to start the conversation."""
-        # Use the age question instead of initial question
-        age_question = self.claude_client.conversation_manager.phases['age']['question']
-        # Log the question being sent for debugging
-        logger.info(f"Sending first message to {self.sender_id}: {age_question}")
+    """Send the age question directly."""
+        age_question = "How old is your child with CP?"
+        logger.info(f"★★★ UPDATED CODE: Sending age question: {age_question} ★★★")
         self._send_message(age_question)
 
 def verify_fb_signature(request_data, signature_header):
