@@ -220,33 +220,29 @@ class MessengerSession:
        
         # TODO: Implement database storage for agent dashboard
    
-    # In the _transition_to_agent method in messenger_webhook.py
     def _transition_to_agent(self, reason: str) -> None:
         """Transition this conversation to be handled by a human agent via Facebook Inbox."""
         self.handled_by_agent = True
-        
+       
         # Log the transition for monitoring purposes
         logger.info(f"Conversation {self.sender_id} transitioned to agent. Reason: {reason}")
-        
-        # Add direct console debugging
-        print(f"DEBUG: Transitioning to agent. Reason: {reason}", file=sys.stderr)
-        
+       
         # Save case data to your database for agents to reference
         try:
             self.claude_client.conversation_manager.save_case_data()
-            
+           
             # Get case details for the notification
             case_data = self.claude_client.conversation_manager.case_data
             age = case_data.get('age', 'Unknown')
             state = case_data.get('state', 'Unknown')
             ranking = case_data.get('ranking', 'normal')
             points = case_data.get('points', 0)
-            
+           
             # Create a case reference ID for tracking
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
             random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
             ref_id = f"{timestamp[-6:]}_{random_suffix}"
-            
+           
             # Prepare case data for agent notification
             notification_data = {
                 'sender_id': self.sender_id,
@@ -258,25 +254,19 @@ class MessengerSession:
                 'timestamp': timestamp,
                 'reason': reason
             }
-            
-            # Print debug information before notification attempt
-            print(f"DEBUG: About to notify agents with data: {notification_data}", file=sys.stderr)
-            
+           
             # Notify the user with case reference
             self._send_message(f"Thank you for providing your information. A team member will review your case (Ref: #{ref_id}) and continue this conversation shortly.")
-            
+           
             # Send notifications to appropriate agents
-            print(f"DEBUG: Calling notify_agents_about_case", file=sys.stderr)
             notify_agents_about_case(notification_data)
-            print(f"DEBUG: notify_agents_about_case called", file=sys.stderr)
-            
+           
         except Exception as e:
-            print(f"DEBUG: Error during agent transition: {str(e)}", file=sys.stderr)
             logger.error(f"Error during agent transition: {e}")
             self._send_message("I'll connect you with a representative who can help you further. They'll review your information and respond shortly.")
    
     def send_welcome_message(self) -> None:
-    """Send the age question directly."""
+        """Send the age question directly."""
         age_question = "How old is your child with CP?"
         logger.info(f"★★★ UPDATED CODE: Sending age question: {age_question} ★★★")
         self._send_message(age_question)
