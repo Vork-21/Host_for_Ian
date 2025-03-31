@@ -6,12 +6,23 @@ import threading
 import sys
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from typing import List, Dict, Any
+# Remove typing imports as they aren't available in Python 2.7
 from datetime import datetime
-from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Try to import dotenv if available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # Function to mimic basic dotenv functionality if not available
+    def load_env_from_file():
+        if os.path.exists('.env'):
+            with open('.env', 'r') as f:
+                for line in f:
+                    if line.strip() and not line.startswith('#'):
+                        key, value = line.strip().split('=', 1)
+                        os.environ[key] = value
+    load_env_from_file()
 
 # Configure logging - file and console output
 logging.basicConfig(
@@ -27,10 +38,10 @@ logger = logging.getLogger("AgentNotifications")
 # Add direct console output for critical debugging (works even if logging fails)
 def debug_print(message):
     """Print directly to stderr to ensure output regardless of logging configuration"""
-    print(f"DEBUG: {message}", file=sys.stderr)
+    print("DEBUG: {}".format(message), file=sys.stderr)
     sys.stderr.flush()  # Ensure output is written immediately
 
-class EmailNotifier:
+class EmailNotifier(object):
     """Send notifications via email."""
     
     def __init__(self):
@@ -47,9 +58,10 @@ class EmailNotifier:
             logger.warning(msg)
             debug_print(msg)
         else:
-            debug_print(f"Email configuration loaded: Server={self.smtp_server}, Port={self.smtp_port}, User={self.smtp_username}")
+            debug_print("Email configuration loaded: Server={}, Port={}, User={}".format(
+                self.smtp_server, self.smtp_port, self.smtp_username))
     
-    def send_notification(self, agents: List[Dict[str, Any]], subject: str, message: str) -> None:
+    def send_notification(self, agents, subject, message):
         """Send email notifications to agents with improved error handling."""
         if not all([self.smtp_server, self.smtp_port, self.smtp_username, self.smtp_password]):
             msg = "Cannot send email notification: configuration incomplete"
@@ -66,7 +78,7 @@ class EmailNotifier:
             debug_print(msg)
             return
         
-        debug_print(f"Preparing to send notification to {len(email_addresses)} agents")
+        debug_print("Preparing to send notification to {} agents".format(len(email_addresses)))
         
         try:
             # Create message
@@ -81,7 +93,7 @@ class EmailNotifier:
             # Add message body
             msg.attach(MIMEText(message, 'plain'))
             
-            debug_print(f"Connecting to SMTP server: {self.smtp_server}:{self.smtp_port}")
+            debug_print("Connecting to SMTP server: {}:{}".format(self.smtp_server, self.smtp_port))
             
             # Connect to SMTP server with enhanced error handling and debugging
             try:
@@ -91,46 +103,48 @@ class EmailNotifier:
                 
                 debug_print("Starting TLS handshake")
                 server.starttls()
-                server.ehlo_or_helo_if_needed()  # Ensure proper handshake after TLS
+                # Use ehlo instead of ehlo_or_helo_if_needed for Python 2.7
+                server.ehlo()  # Ensure proper handshake after TLS
                 
-                debug_print(f"Authenticating as {self.smtp_username}")
+                debug_print("Authenticating as {}".format(self.smtp_username))
                 server.login(self.smtp_username, self.smtp_password)
                 
                 debug_print("Sending email message")
-                server.send_message(msg)
+                # Use as_string() method for Python 2.7
+                server.sendmail(self.from_email, email_addresses, msg.as_string())
                 server.quit()
                 
-                msg_sent = f"Email notification sent to {len(email_addresses)} agents"
+                msg_sent = "Email notification sent to {} agents".format(len(email_addresses))
                 logger.info(msg_sent)
                 debug_print(msg_sent)
                 
             except smtplib.SMTPAuthenticationError as e:
-                error_msg = f"SMTP Authentication Error: {e}"
+                error_msg = "SMTP Authentication Error: {}".format(e)
                 logger.error(error_msg)
                 debug_print(error_msg)
                 debug_print("Check your username and password")
                 raise
                 
             except smtplib.SMTPConnectError as e:
-                error_msg = f"SMTP Connection Error: {e}"
+                error_msg = "SMTP Connection Error: {}".format(e)
                 logger.error(error_msg)
                 debug_print(error_msg)
-                debug_print(f"Unable to connect to {self.smtp_server}:{self.smtp_port}")
+                debug_print("Unable to connect to {}:{}".format(self.smtp_server, self.smtp_port))
                 raise
                 
             except smtplib.SMTPException as e:
-                error_msg = f"SMTP Error: {e}"
+                error_msg = "SMTP Error: {}".format(e)
                 logger.error(error_msg)
                 debug_print(error_msg)
                 raise
                 
         except Exception as e:
-            error_msg = f"Unexpected error sending email: {str(e)}"
+            error_msg = "Unexpected error sending email: {}".format(str(e))
             logger.error(error_msg)
             debug_print(error_msg)
             raise
 
-class NotificationManager:
+class NotificationManager(object):
     """
     Manages notifications to human agents when a conversation requires their attention.
     """
@@ -139,11 +153,11 @@ class NotificationManager:
         # Load agent contact information
         self.agents = self._load_agents()
         self.email_notifier = EmailNotifier()
-        init_msg = f"NotificationManager initialized with {len(self.agents)} agents"
+        init_msg = "NotificationManager initialized with {} agents".format(len(self.agents))
         logger.info(init_msg)
         debug_print(init_msg)
     
-    def _load_agents(self) -> List[Dict[str, Any]]:
+    def _load_agents(self):
         """Load agent contact information from JSON file or environment variable."""
         try:
             # Try to load from file first
@@ -151,27 +165,27 @@ class NotificationManager:
             if os.path.exists(agents_file):
                 with open(agents_file, 'r') as f:
                     agents = json.load(f)
-                    debug_print(f"Loaded {len(agents)} agents from {agents_file}")
+                    debug_print("Loaded {} agents from {}".format(len(agents), agents_file))
                     return agents
             
             # Fall back to parsing from environment variable
             agents_json = os.getenv('AGENTS_JSON', '[]')
             agents = json.loads(agents_json)
-            debug_print(f"Loaded {len(agents)} agents from environment variable")
+            debug_print("Loaded {} agents from environment variable".format(len(agents)))
             return agents
         
         except Exception as e:
-            error_msg = f"Error loading agents: {e}"
+            error_msg = "Error loading agents: {}".format(e)
             logger.error(error_msg)
             debug_print(error_msg)
             return []
     
-    def _get_available_agents(self, priority: str = 'normal') -> List[Dict[str, Any]]:
+    def _get_available_agents(self, priority='normal'):
         available = [agent for agent in self.agents if agent.get('active', True)]
-        debug_print(f"Found {len(available)} available agents")
+        debug_print("Found {} available agents".format(len(available)))
         return available
     
-    def notify_new_case(self, case_data: Dict[str, Any]) -> bool:
+    def notify_new_case(self, case_data):
         """
         Notify appropriate agents about a new case that needs attention.
         Returns True if notifications were sent successfully.
@@ -183,49 +197,49 @@ class NotificationManager:
         age = case_data.get('age', 'Unknown')
         state = case_data.get('state', 'Unknown')
         
-        debug_print(f"Processing notification for case {ref_id} with {priority} priority")
+        debug_print("Processing notification for case {} with {} priority".format(ref_id, priority))
         
         # Get available agents for this priority
         agents = self._get_available_agents(priority)
         
         if not agents:
-            msg = f"No available agents to notify for case {ref_id}"
+            msg = "No available agents to notify for case {}".format(ref_id)
             logger.warning(msg)
             debug_print(msg)
             return False
         
         # Build notification message
-        subject = f"New CP Case: #{ref_id} ({priority.upper()} Priority)"
-        message = f"""
+        subject = "New CP Case: #{} ({} Priority)".format(ref_id, priority.upper())
+        message = """
         NEW CP CASE REQUIRES ATTENTION
 
-        Reference: #{ref_id}
-        Priority: {priority.upper()}
-        Age: {age}
-        State: {state}
+        Reference: #{}
+        Priority: {}
+        Age: {}
+        State: {}
 
         This case has been automatically pre-qualified and requires your attention.
         Please log in to Facebook Business Suite to respond:
         https://business.facebook.com/latest/inbox
-        """
+        """.format(ref_id, priority.upper(), age, state)
         
         # Send notification via email
         try:
-            debug_print(f"Attempting to send email notification for case {ref_id}")
+            debug_print("Attempting to send email notification for case {}".format(ref_id))
             self.email_notifier.send_notification(agents, subject, message)
-            success_msg = f"Email notifications sent for case {ref_id} to {len(agents)} agents"
+            success_msg = "Email notifications sent for case {} to {} agents".format(ref_id, len(agents))
             logger.info(success_msg)
             debug_print(success_msg)
             return True
         except Exception as e:
-            error_msg = f"Error sending email notification: {e}"
+            error_msg = "Error sending email notification: {}".format(e)
             logger.error(error_msg)
             debug_print(error_msg)
             return False
     
-    def notify_in_background(self, case_data: Dict[str, Any]) -> None:
+    def notify_in_background(self, case_data):
         """Send notifications in a background thread to avoid blocking."""
-        debug_print(f"Starting background notification thread for case {case_data.get('ref_id', 'Unknown')}")
+        debug_print("Starting background notification thread for case {}".format(case_data.get('ref_id', 'Unknown')))
         thread = threading.Thread(target=self.notify_new_case, args=(case_data,))
         thread.daemon = True
         thread.start()
@@ -236,7 +250,7 @@ notification_manager = NotificationManager()
 # Function to use in messenger_webhook.py
 def notify_agents_about_case(case_data):
     """Utility function to notify agents about a new case."""
-    debug_print(f"notify_agents_about_case called with case ID: {case_data.get('ref_id', 'Unknown')}")
+    debug_print("notify_agents_about_case called with case ID: {}".format(case_data.get('ref_id', 'Unknown')))
     notification_manager.notify_in_background(case_data)
 
 # Simple test function to verify SMTP settings directly
@@ -250,7 +264,8 @@ def test_smtp_connection():
     smtp_password = os.getenv('SMTP_PASSWORD', '')
     from_email = os.getenv('FROM_EMAIL', smtp_username)
     
-    debug_print(f"Using settings: Server={smtp_server}, Port={smtp_port}, User={smtp_username}")
+    debug_print("Using settings: Server={}, Port={}, User={}".format(
+        smtp_server, smtp_port, smtp_username))
     
     try:
         # Create a simple test message
@@ -260,12 +275,12 @@ def test_smtp_connection():
         msg['To'] = from_email
         
         # Connect to server with debugging
-        debug_print(f"Connecting to {smtp_server}:{smtp_port}")
+        debug_print("Connecting to {}:{}".format(smtp_server, smtp_port))
         server = smtplib.SMTP(smtp_server, smtp_port)
         server.set_debuglevel(2)
         debug_print("Starting TLS")
         server.starttls()
-        debug_print(f"Authenticating as {smtp_username}")
+        debug_print("Authenticating as {}".format(smtp_username))
         server.login(smtp_username, smtp_password)
         debug_print("Sending test message")
         server.sendmail(from_email, from_email, msg.as_string())
@@ -273,7 +288,7 @@ def test_smtp_connection():
         debug_print("SMTP test successful!")
         return True
     except Exception as e:
-        debug_print(f"SMTP test failed: {str(e)}")
+        debug_print("SMTP test failed: {}".format(str(e)))
         return False
 
 # Run a test if this file is executed directly
